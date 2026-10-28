@@ -1,0 +1,1 @@
+export default function Metric({label,value,detail,tone="slate"}:{label:string;value:string|number;detail:string;tone?:"slate"|"teal"|"amber"|"violet"}){return <article className={`metric metric-${tone}`}><p>{label}</p><strong>{value}</strong><span>{detail}</span></article>}
