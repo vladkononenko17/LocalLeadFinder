@@ -32,7 +32,7 @@ type GPlace = {
   googleMapsUri?: string;
 };
 
-export type GoogleSearchStats = { requests: number; budgetExhausted: boolean };
+export type GoogleSearchStats = { requests: number; budgetExhausted: boolean; error?: string };
 
 type Fetcher = typeof fetch;
 
@@ -65,6 +65,7 @@ export async function googleDiscover(opts: {
 }): Promise<{ places: RawPlace[]; stats: GoogleSearchStats }> {
   const fetcher = opts.fetcher ?? fetch;
   const stats: GoogleSearchStats = { requests: 0, budgetExhausted: false };
+  if (opts.maxRequests <= 0) return { places: [], stats: { ...stats, budgetExhausted: true } };
   const found = new Map<string, RawPlace>();
 
   // Очередь задач: (запрос, тайл). Обход в ширину, чтобы бюджет распределялся равномерно по площади.
@@ -72,6 +73,7 @@ export async function googleDiscover(opts: {
   const root = circleBBox(opts.center, opts.radius);
   for (const c of opts.categories) for (const q of c.google.queries) queue.push({ query: q, includedType: c.google.includedType, slug: c.slug, rect: root });
 
+  try {
   while (queue.length) {
     const task = queue.shift()!;
     if (!rectTouchesCircle(task.rect, opts.center, opts.radius)) continue;
@@ -125,6 +127,10 @@ export async function googleDiscover(opts: {
       for (const sub of splitRect(task.rect)) queue.push({ ...task, rect: sub });
     }
     if (stats.budgetExhausted) break;
+  }
+  } catch (e) {
+    // Частичный результат + точный счётчик запросов важнее, чем потерять всё на одной ошибке.
+    stats.error = e instanceof Error ? e.message : String(e);
   }
   return { places: [...found.values()], stats };
 }

@@ -113,7 +113,7 @@ test("runSearch: Overpass упал — Google всё равно отдаёт л�
     if (String(url).includes("overpass")) throw new Error("timeout");
     return gm(url as any, init);
   }) as any;
-  const r = await runSearch({ city: "Київ", radius: 1500, category: "cafe", limit: 50, sources: ["osm", "google"] }, { googleApiKey: "k", googleMaxRequests: 30 }, fetcher);
+  const r = await runSearch({ city: "Київ", radius: 1500, category: "cafe", limit: 50, sources: ["osm", "google"] }, { googleApiKey: "k", googleBudget: 30 }, fetcher);
   assert.equal(r.leads.length, 50);
   assert.ok(r.stats.warnings.some((w) => w.includes("Overpass")));
   for (let i = 1; i < r.leads.length; i++) assert.ok(r.leads[i - 1].score >= r.leads[i].score);
@@ -125,4 +125,38 @@ test("runSearch: без ключа Google — понятное предупре�
   assert.equal(r.leads.length, 1);
   assert.equal(r.leads[0].category, "fitness_centre");
   assert.ok(r.stats.warnings[0].includes("GOOGLE_MAPS_API_KEY"));
+});
+
+test("Лимит: нулевой бюджет — Google не вызывается вообще", async () => {
+  let googleCalls = 0;
+  const fetcher = (async (url: string) => {
+    if (String(url).includes("googleapis")) googleCalls++;
+    return new Response(JSON.stringify({ elements: [{ type: "node", id: 1, lat: 50.45, lon: 30.52, tags: { name: "Кава", amenity: "cafe" } }] }));
+  }) as any;
+  const r = await runSearch({ city: "Kyiv", radius: 1000, category: "cafe", limit: 10, sources: ["osm", "google"] }, { googleApiKey: "k", googleBudget: 0 }, fetcher);
+  assert.equal(googleCalls, 0);
+  assert.equal(r.stats.googleRequests, 0);
+  assert.ok(r.stats.warnings.some((w) => w.includes("лимит Google на этот месяц исчерпан")));
+});
+
+test("Лимит: Google никогда не получает больше запросов, чем зарезервировано", async () => {
+  for (const budget of [1, 7, 25]) {
+    const log: any[] = [];
+    const r = await googleDiscover({ apiKey: "k", center: KYIV, radius: 3000, categories: resolveCategories("cafe|restaurant|hairdresser"), maxRequests: budget, fetcher: googleMock(log) });
+    assert.equal(log.length, r.stats.requests);
+    assert.ok(log.length <= budget, `budget ${budget}, sent ${log.length}`);
+  }
+});
+
+test("Лимит: при ошибке Google посреди поиска счётчик запросов точный", async () => {
+  const gm = googleMock([]);
+  let n = 0;
+  const fetcher = (async (url: string, init: any) => {
+    if (++n === 4) return new Response("quota", { status: 429 });
+    return gm(url as any, init);
+  }) as any;
+  const r = await googleDiscover({ apiKey: "k", center: KYIV, radius: 3000, categories: resolveCategories("cafe"), maxRequests: 20, fetcher });
+  assert.equal(r.stats.requests, 4); // 4-й запрос тоже мог быть оплачен — считаем его
+  assert.match(r.stats.error ?? "", /429/);
+  assert.ok(r.places.length > 0, "частичные результаты сохранены");
 });
